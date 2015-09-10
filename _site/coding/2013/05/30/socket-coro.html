@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html>
+
+  <head>
+  <meta charset="utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+
+  <title>python-socket-engine v1.1  with generator coroutine support</title>
+  <meta name="description" content="项目页面">
+
+  <link rel="stylesheet" href="/css/main.css">
+  <link rel="canonical" href="http://blog.warp10.info/coding/2013/05/30/socket-coro.html">
+  <link rel="alternate" type="application/rss+xml" title="Warp 10" href="http://blog.warp10.info/feed.xml" />
+</head>
+
+
+  <body>
+
+    <header class="site-header">
+
+  <div class="wrapper">
+
+    <a class="site-title" href="/">Warp 10</a>
+
+    <nav class="site-nav">
+      <a href="#" class="menu-icon">
+        <svg viewBox="0 0 18 15">
+          <path fill="#424242" d="M18,1.484c0,0.82-0.665,1.484-1.484,1.484H1.484C0.665,2.969,0,2.304,0,1.484l0,0C0,0.665,0.665,0,1.484,0 h15.031C17.335,0,18,0.665,18,1.484L18,1.484z"/>
+          <path fill="#424242" d="M18,7.516C18,8.335,17.335,9,16.516,9H1.484C0.665,9,0,8.335,0,7.516l0,0c0-0.82,0.665-1.484,1.484-1.484 h15.031C17.335,6.031,18,6.696,18,7.516L18,7.516z"/>
+          <path fill="#424242" d="M18,13.516C18,14.335,17.335,15,16.516,15H1.484C0.665,15,0,14.335,0,13.516l0,0 c0-0.82,0.665-1.484,1.484-1.484h15.031C17.335,12.031,18,12.696,18,13.516L18,13.516z"/>
+        </svg>
+      </a>
+
+      <div class="trigger">
+        
+          
+          <a class="page-link" href="/about/">About</a>
+          
+        
+          
+        
+          
+        
+          
+        
+      </div>
+    </nav>
+
+  </div>
+
+</header>
+
+
+    <div class="page-content">
+      <div class="wrapper">
+        <div class="post">
+
+  <header class="post-header">
+    <h1 class="post-title">python-socket-engine v1.1  with generator coroutine support</h1>
+    <p class="post-meta">May 30, 2013</p>
+  </header>
+
+  <article class="post-content">
+    <p><a href="https://github.com/frostyplanet/python-socket-engine">项目页面</a></p>
+
+<p>先说一下过往的历史。</p>
+
+<p>这其实是一个自娱自乐的项目。刚开始的时候只是想做一个纯python的兼容多线程的异步通信框架。虽然现在python下面选择很多，写web的有各种wscgi的实现，通用的也有很多。
+像标准库里面的SocketServer(最多只能加上ThreadingMixIn/ForkingMixIn)；
+asyncore没有超时，伪异步模型，没有定长的读写函数，在一个handler里面实现复杂的状态机也是个很头痛的事情；
+twisted，thrift等好像都是要把逻辑拆成transport/dispatch/server, 从设计模式上觉得很复杂不灵活，另外也局限于同步模式的效率问题。
+而gevent打monkey patch是很方便，替换了threading api和读写操作，不过想起来以前在perl下面用Coro/EV/AnyEvent的时候有诡异的各种疑难杂证，这也不例外。</p>
+
+<p>所以总体上没有一个合心水的。所以参照像POE那样的基于回调的样子，自己写一个，每个异步(connect/read/write/readline)的操作都有两个回调(ok/error)，自动对读/写/空闲连接做超时检查，出错的时候触发error回调并且自动close connection。
+如果需要性能，那就把业务逻辑组织成串联起来的回调，如果需要短平快的实现，那就做线程池的同步实现，都十分灵活。
+不过这也是写了很多服务端和客户端逐渐改进过来的，历时两年多了。</p>
+
+<h2 id="change-log">Change Log</h2>
+
+<p>v0.3 用在配管项目，那个时候每个connection都有一个状态，底层的poll实现只能注册一种事件，读写还不能是同时的，开始的时候异步方式要比同步方式慢一倍。</p>
+
+<p>v0.4 用在克隆项目，做了一个简单的异步http方式接口</p>
+
+<p>v0.7 加了ssl支持和rpc client/server</p>
+
+<p>v0.9 写了transwarp私有协议代理，改成每个connection读写可以不互相影响，网速快的时候可以跑出十多兆的流量吞吐，本地回环上的顺序读写测试可以达到千兆速率。异步回调方式已经可以和同步方式一样快了</p>
+
+<p>v1.0 加了readahead的特性，最大限度减少了异步方式额外开销。</p>
+
+<p>v1.1 加了coroutine支持。异步回调可以转变为在generator中yield的写法。</p>
+
+<h2 id="api">API约定</h2>
+
+<p>基本上每个server其实都有一个(或分阶段有多个) readable的handler，用来放主要的逻辑入口。新链接被listener accept之后，先经过new_conn_cb() 回调来根据自定义的逻辑过滤或握手，然后被put_sock（）放进poll里头等待i/o事件。</p>
+
+<p>在可读时候就触发回调readable_cb()。然后经过一定的read和write操作，当要暂停处理的时候调用remove_conn（）从事件引擎中移除 (比如转交给线程池的worker做阻塞方式读写什么的) 。或者处理完毕再watch_conn() 把链接放进poll中等待readable事件。在watch_conn之后connection会变成idle状态，如果链接是长链接的话，也可以通过idle timeout超时来移除长期不活动链接。</p>
+
+<p>如果是客户端方式的connection的话，里面相应的readable回调为空，读写操作和服务端一样。</p>
+
+<h2 id="section">性能优化思路</h2>
+
+<p>对于python来说，每一次函数调用的开销都是可见的，系统调用的开销更大（因为异步模式需要register/unregister 事件和回调）。
+所以为什么一开始的时候，异步回调的server会比同步模式的server要用额外的2/3到一倍的时间。越是内层的事件循环，每个语句的开销更加明显，有时候频繁访问的对象属性多一层引用，或者多几个额外的赋值，都会有影响。</p>
+
+<p>往poll中register fd的开销是最明显的。所以每次read_unblock()/write_unblock()都要先尝试读/写，遇到EAGAIN之后才往poll中注册。还有注册fd的时候先看看自己维护的字典，如果注册的事件一样，那就只改回调函数，省去了重新注册fd。</p>
+
+<p>对于已经完成的读操作，由于框架不知道后面是不是还要读，所以并不会自作主张的把已经注册的读事件注销，最初要使用者显式调用remove_conn()，但如果不注意的漏写了的话，在一些度操作之后可能由于写操作的时间比较长，先前注册的读回调被意外触发，这当然会引发诡异的程序行为。所以在v1.0版本中，通过在读操作完成之后，把先前注册的读回调替换成readahead的回调，readahead缓冲如果满了再注销。这样下次读的时候就直接从缓冲中取就行了。一举两得，上层既不用去管下层的事件register/unregister，同时也节省了一些系统调用的开销。而写操作，如果往poll中注册过事件的话，操作完了当然是要立刻注销的。</p>
+
+<p>对于EPoll的edge-trigger特性，也会有问题需要避免。比如说system buffer中有50k数据可用，一次事件触发的时候由于业务逻辑的需要只读了20k，如果没有unregister fd的话，下一次watch_conn()之后可读事件并不会触发，所以在实现read_unblock的时候，总是比要求的长度去多读一点，多出来的放在readahead buffer中，下次watch的时候如果readahead buffer有数据的话，可以跳过register fd的步骤，立刻调用readable_cb() ，如果没有数据的话，证明上一次的已经读完了，这时候register fd是安全的。</p>
+
+<p>关于回调的效率，由于有时候读写可以跳过poll的注册直接完成，直接执行的比间接回调要快，但是直接执行回调会容易出现递归过多超过了栈大小的问题，所以给每个connection对象保存了递归调用的计数，超过的时候就要把回调放进
+一个pending的队列中等下一个poll循环触发。</p>
+
+<p>暂时就想到这么多了。</p>
+
+<h2 id="evevent">关于EV、event等事件引擎</h2>
+
+<p>由于之前都是用select.poll和select.epoll来实现事件循环，试了一下pyev，不像通常认为的C实现的要比python快，反而比起先前的我用select.epoll写的模块没有性能优势，可能由于里面由于复杂的各种逻辑(timer/process watcher等)额外的开销, 另外EV为了安全起见使用的EPoll后端是level-trigger的，好像没有改成edge-trigger的选项。</p>
+
+<h2 id="section-1">写了这么久终于轮到协程了</h2>
+
+<p>回调方式的异步的问题就是程序写起来不直观，如果有多个读/写操作的话，每一步都要拆成一个回调。有时候函数的参数也容易传错。更重要的是，抛异常的时候，如果刚好是被多个地方用到的共同的回调，
+看堆栈信息很难找到出问题来源。</p>
+
+<p>比如说看下面这样一个测试代码片段，是不是眼花了? 写过一次的代码都不想再写第二遍。而且回调定义的顺序需要和执行顺序倒过来。</p>
+
+<pre><code>def test_connect (self):
+    event = threading.Event ()
+    err = None
+    def __on_err (conn):
+        print conn.error
+        self.fail (conn.error)
+    def __on_conn_err (e):
+        err = "conn" + str(conn.error)
+        event.set ()
+    def __on_read (conn):
+        print "read"
+        self.client.engine.close_conn (conn)
+        buf = conn.get_readbuf ()
+        if buf == self.data:
+            print "ok"
+            pass
+        else:
+            err = "test connect error, invalid data received: %s" % (buf)
+        event.set ()
+    def __on_write (conn):
+        print "write"
+        self.client.engine.read_unblock (conn, len (self.data), __on_read, __on_err)
+        return
+    def __on_conn (sock):
+        print "on connect"
+        self.client.engine.write_unblock (Connection (sock), self.data, __on_write, __on_err)
+        return
+    self.client.engine.connect_unblock (self.server_addr, __on_conn, __on_conn_err)
+    print "connect unblock"
+    event.wait ()
+    if not err:
+        print "* test connect ok"
+    else:
+        self.fail (err)
+</code></pre>
+
+<p>而coroutine就是把同步过程异步化的最好的方式。但是我并不想用gevent或者evenlet这些侵入式的实现，如果有纯python的话就最好了。前天找了一下终于看到了<a href="git://github.com/sampsyo/bluelet.git">bluelet</a>这个东西。众所周知，由于python generator只能保存一层堆栈，所以bluelet里面做了一个专门的事件循环来跟踪不同coro的关系。不过现有版本额外开销有点大，所以拿过来重写了一下，顺便和我的框架整合。
+纯python实现的好处就是，多开若干真实的线程，把接受到的链接round robin到不同的线程中poll，或者用异步方式接收请求，把会阻塞的工作放到线程池中处理，可以最大限度的利用cpu。</p>
+
+<p>对照上面的代码片段，coro方式的如下，应该看起来直观很多了。唯一要注意的是不能忘了yield。</p>
+
+<pre><code>def test_connect (self):
+    event = threading.Event ()
+    err = None
+    def _client ():
+        _data = None
+        try:
+            engine = self.client.engine
+            print "connecting"
+            conn = yield engine.connect_coro (self.server_addr)
+            print "connected"
+            yield conn.write (self.data)
+            _data = yield conn.read (len (self.data))
+            conn.close ()
+        except Exception, e:
+            getLogger ("client").exception (e)
+            self.fail (e)
+            return
+        if _data == self.data:
+            print ("conn &amp; read ok")
+            event.set ()
+        else:
+            err = "test connect error, invalid data received: %s" % (buf)
+            event.set ()
+            self.fail (err)
+        return
+    self.client.engine.run_coro (_client)
+    event.wait ()
+</code></pre>
+
+<h2 id="coroutine">coroutine模式性能测试</h2>
+
+<p>环境intel i3-2310M (关了超线程)</p>
+
+<p>阻塞方式4线程客户端，每个线程顺序读写100k数据并且循环50000次，测试从开始到结束的时间，多次测试取最快的一次，在本地回环接口测试。</p>
+
+<p>服务端规定要每次接收到100k数据后才能完整写回。</p>
+
+<p>异步回调方式的服务端 : 18.549s (v0.9), 17.954s (v1)</p>
+
+<p>单线程阻塞方式的伪并发服务端: 19.98s (v0.9), 18.68s (v1)</p>
+
+<p>纯python协程的服务端:  优化前（基于bluelet的原有代码） 31.154s,   优化后(v1.1) 21.735s</p>
+
+<p>所以还是有一些额外开销，暂时比较满意了。</p>
+
+
+  </article>
+
+</div>
+
+      </div>
+    </div>
+
+    <footer class="site-footer">
+
+  <div class="wrapper">
+
+    <h2 class="footer-heading">Warp 10</h2>
+
+    <div class="footer-col-wrapper">
+      <div class="footer-col  footer-col-1">
+        <ul class="contact-list">
+          <li>Warp 10</li>
+          <li><a href="mailto:frostyplanet@localhost">frostyplanet@localhost</a></li>
+        </ul>
+      </div>
+
+      <div class="footer-col  footer-col-2">
+        <ul class="social-media-list">
+          
+          <li>
+            <a href="https://github.com/frostyplanet">
+              <span class="icon  icon--github">
+                <svg viewBox="0 0 16 16">
+                  <path fill="#828282" d="M7.999,0.431c-4.285,0-7.76,3.474-7.76,7.761 c0,3.428,2.223,6.337,5.307,7.363c0.388,0.071,0.53-0.168,0.53-0.374c0-0.184-0.007-0.672-0.01-1.32 c-2.159,0.469-2.614-1.04-2.614-1.04c-0.353-0.896-0.862-1.135-0.862-1.135c-0.705-0.481,0.053-0.472,0.053-0.472 c0.779,0.055,1.189,0.8,1.189,0.8c0.692,1.186,1.816,0.843,2.258,0.645c0.071-0.502,0.271-0.843,0.493-1.037 C4.86,11.425,3.049,10.76,3.049,7.786c0-0.847,0.302-1.54,0.799-2.082C3.768,5.507,3.501,4.718,3.924,3.65 c0,0,0.652-0.209,2.134,0.796C6.677,4.273,7.34,4.187,8,4.184c0.659,0.003,1.323,0.089,1.943,0.261 c1.482-1.004,2.132-0.796,2.132-0.796c0.423,1.068,0.157,1.857,0.077,2.054c0.497,0.542,0.798,1.235,0.798,2.082 c0,2.981-1.814,3.637-3.543,3.829c0.279,0.24,0.527,0.713,0.527,1.437c0,1.037-0.01,1.874-0.01,2.129 c0,0.208,0.14,0.449,0.534,0.373c3.081-1.028,5.302-3.935,5.302-7.362C15.76,3.906,12.285,0.431,7.999,0.431z"/>
+                </svg>
+              </span>
+
+              <span class="username">frostyplanet</span>
+            </a>
+          </li>
+          
+
+          
+        </ul>
+      </div>
+
+      <div class="footer-col  footer-col-3">
+        <p class="text">"Warp 10" is impossible speed in StarTrek universe
+</p>
+      </div>
+    </div>
+
+  </div>
+
+</footer>
+
+
+  </body>
+
+</html>

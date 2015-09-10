@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html>
+
+  <head>
+  <meta charset="utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+
+  <title>写了个python的rpc实现来替代thrift</title>
+  <meta name="description" content="最近线上用apache Thrift实现的服务端变得越来越不靠普，现象就是用TServer.TThreadedServer做的服务端accept之后，ssl handshake的时候一直出错，让所有客户端都无法链接。重启也不一定能消除。线上用了大半年，原来每个月挂一两次，现在变成几个小时就挂。抛的异常像这样，但是...">
+
+  <link rel="stylesheet" href="/css/main.css">
+  <link rel="canonical" href="http://blog.warp10.info/coding/2013/03/13/rpc-implementation.html">
+  <link rel="alternate" type="application/rss+xml" title="Warp 10" href="http://blog.warp10.info/feed.xml" />
+</head>
+
+
+  <body>
+
+    <header class="site-header">
+
+  <div class="wrapper">
+
+    <a class="site-title" href="/">Warp 10</a>
+
+    <nav class="site-nav">
+      <a href="#" class="menu-icon">
+        <svg viewBox="0 0 18 15">
+          <path fill="#424242" d="M18,1.484c0,0.82-0.665,1.484-1.484,1.484H1.484C0.665,2.969,0,2.304,0,1.484l0,0C0,0.665,0.665,0,1.484,0 h15.031C17.335,0,18,0.665,18,1.484L18,1.484z"/>
+          <path fill="#424242" d="M18,7.516C18,8.335,17.335,9,16.516,9H1.484C0.665,9,0,8.335,0,7.516l0,0c0-0.82,0.665-1.484,1.484-1.484 h15.031C17.335,6.031,18,6.696,18,7.516L18,7.516z"/>
+          <path fill="#424242" d="M18,13.516C18,14.335,17.335,15,16.516,15H1.484C0.665,15,0,14.335,0,13.516l0,0 c0-0.82,0.665-1.484,1.484-1.484h15.031C17.335,12.031,18,12.696,18,13.516L18,13.516z"/>
+        </svg>
+      </a>
+
+      <div class="trigger">
+        
+          
+          <a class="page-link" href="/about/">About</a>
+          
+        
+          
+        
+          
+        
+          
+        
+      </div>
+    </nav>
+
+  </div>
+
+</header>
+
+
+    <div class="page-content">
+      <div class="wrapper">
+        <div class="post">
+
+  <header class="post-header">
+    <h1 class="post-title">写了个python的rpc实现来替代thrift</h1>
+    <p class="post-meta">Mar 13, 2013</p>
+  </header>
+
+  <article class="post-content">
+    <p>最近线上用apache Thrift实现的服务端变得越来越不靠普，现象就是用TServer.TThreadedServer做的服务端accept之后，ssl handshake的时候一直出错，让所有客户端都无法链接。重启也不一定能消除。线上用了大半年，原来每个月挂一两次，现在变成几个小时就挂。
+抛的异常像这样，但是一直找不到答案：</p>
+
+<pre><code>[Errno 8] _ssl.c:504: EOF occurred in violation of protocol
+Traceback (most recent call last):
+  File "**********/server.py", line 48, in accept
+	server_side=True, ssl_version=ssl.PROTOCOL_TLSv1)
+  File "/usr/lib64/python2.7/ssl.py", line 381, in wrap_socket
+	ciphers=ciphers)
+  File "/usr/lib64/python2.7/ssl.py", line 143, in __init__
+	self.do_handshake()
+  File "/usr/lib64/python2.7/ssl.py", line 305, in do_handshake
+	self._sslobj.do_handshake()
+SSLError: [Errno 8] _ssl.c:504: EOF occurred in violation of protocol
+</code></pre>
+
+<p>python的ssl模块底层是用的openssl库，_sslobj的方法都在c binding里头, 所以上面说的那个异常要调试实在比较困难。
+其实我们这个服务每分钟的请求数只有500个左右，也不算多…</p>
+
+<p>因为实在忍受不了随时要重启服务。另外由于对thrift不爽其实由来已久，协议很复杂，文档不完善，server端也写得不咋地 (TSimpleServer性能不能指望，TThreadPoolServer除了用SIGKILL以外的信号都不能kill掉，TNonblockingServer没能跑起来好像也不支持SSL)。
+看上去很新颖的东西未必符合自己需要，不得不自己写一个替代品。</p>
+
+<p>首先花了一日来研究ssl握手怎么在异步模式下工作。关键就是ssl.wrap_socket之后有一个do_handshake的步骤，
+可以在wrap的时候通过参数让他不自动调用，然后在你的异步代码中把handshake显式整合进去。另外就是异步读写的时候，由于ssl socket是包装过的，i/o事件处理的时候需要捕捉SSL_ERROR_WANT_READ和SSL_ERROR_WANT_WRITE , 相当于普通socket的EAGAIN。</p>
+
+<p>在我之前的写框架里面搞定异步ssl之后，做rpc的server其实就比较简单，可以用内省把函数加进服务端handle。客户端的封装还是费了一点心思。相比thrift需要预定义结构和接口生成代码, 自己做这些当然没什么必要，改成用pickle来序列化request和response。然而由于对象不方便序列化，调用的参数和返回值只能用普通的内置类型来做结构体，如果结构体层次复杂的话其实挺麻烦的，因为我不想写太多代码检查结构和捕捉异常，于是想到参考BeautilfulSoup的方式，写了一个结构体的wrapper，重载一些操作符，可以用比较懒人的方式访问：</p>
+
+<pre><code>d = {'a': 1, 'b':2}
+e = AttrWrapper (d)
+print "e.name.name:", e.name.name 	# empty string
+print "e.a:", e.a, "e.b:", e.b   	# 1 2
+print "e:", e  						# {'a':1, 'b':2}  #但e是封装过后的对象
+print "e:", e.unwrap ().items()     # [('a', 1), ('b', 2)]  #unwrap之后获得原本的dict
+l = [1, 2, d]
+e2 = AttrWrapper (l)
+print "e2:", e2  					# [1, 2, {'a': 1, 'b': 2}]
+print "e2[0]:", e2[0]  				# 1
+#print e2[3] 						# IndexError
+print "e2[2]:", e2[2]				# 获得上面和d一样的封装过后的对象
+print "b:", e2[2].b 				# 2
+e_empty = AttrWrapper ({})
+print "e_empty:", e_empty  			# empty string
+assert not e_empty
+assert not e_empty.a
+#print e2.a   						# KeyError
+#print e[0]   						# IndexError
+#print e.a.b  						# KeyError
+</code></pre>
+
+<p>然后搞定之后花了一天来移植业务逻辑，没日没夜地搞了两天，上线之后看着各种日志在刷屏，有种淡淡的空虚。</p>
+
+<p>这个框架的代码在<a href="https://github.com/frostyplanet/python-socket-engine">github python-socket-engine</a>, 见test/test_rpc.py</p>
+
+<p>ps:  回头想了想，发现上面 print “e.name.name” 不抛异常是个错误的feature，因为这里的情景并不等同于访问层次很深的dom树，事实上e.name就应该返回None</p>
+
+
+  </article>
+
+</div>
+
+      </div>
+    </div>
+
+    <footer class="site-footer">
+
+  <div class="wrapper">
+
+    <h2 class="footer-heading">Warp 10</h2>
+
+    <div class="footer-col-wrapper">
+      <div class="footer-col  footer-col-1">
+        <ul class="contact-list">
+          <li>Warp 10</li>
+          <li><a href="mailto:frostyplanet@localhost">frostyplanet@localhost</a></li>
+        </ul>
+      </div>
+
+      <div class="footer-col  footer-col-2">
+        <ul class="social-media-list">
+          
+          <li>
+            <a href="https://github.com/frostyplanet">
+              <span class="icon  icon--github">
+                <svg viewBox="0 0 16 16">
+                  <path fill="#828282" d="M7.999,0.431c-4.285,0-7.76,3.474-7.76,7.761 c0,3.428,2.223,6.337,5.307,7.363c0.388,0.071,0.53-0.168,0.53-0.374c0-0.184-0.007-0.672-0.01-1.32 c-2.159,0.469-2.614-1.04-2.614-1.04c-0.353-0.896-0.862-1.135-0.862-1.135c-0.705-0.481,0.053-0.472,0.053-0.472 c0.779,0.055,1.189,0.8,1.189,0.8c0.692,1.186,1.816,0.843,2.258,0.645c0.071-0.502,0.271-0.843,0.493-1.037 C4.86,11.425,3.049,10.76,3.049,7.786c0-0.847,0.302-1.54,0.799-2.082C3.768,5.507,3.501,4.718,3.924,3.65 c0,0,0.652-0.209,2.134,0.796C6.677,4.273,7.34,4.187,8,4.184c0.659,0.003,1.323,0.089,1.943,0.261 c1.482-1.004,2.132-0.796,2.132-0.796c0.423,1.068,0.157,1.857,0.077,2.054c0.497,0.542,0.798,1.235,0.798,2.082 c0,2.981-1.814,3.637-3.543,3.829c0.279,0.24,0.527,0.713,0.527,1.437c0,1.037-0.01,1.874-0.01,2.129 c0,0.208,0.14,0.449,0.534,0.373c3.081-1.028,5.302-3.935,5.302-7.362C15.76,3.906,12.285,0.431,7.999,0.431z"/>
+                </svg>
+              </span>
+
+              <span class="username">frostyplanet</span>
+            </a>
+          </li>
+          
+
+          
+        </ul>
+      </div>
+
+      <div class="footer-col  footer-col-3">
+        <p class="text">"Warp 10" is impossible speed in StarTrek universe
+</p>
+      </div>
+    </div>
+
+  </div>
+
+</footer>
+
+
+  </body>
+
+</html>

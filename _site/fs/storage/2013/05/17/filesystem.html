@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html>
+
+  <head>
+  <meta charset="utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+
+  <title>文件系统知识入门</title>
+  <meta name="description" content="不知道为什么会转头看文件系统，大概因为以前曾经试图看过reiserfs看不出个所以然来，完成一下心愿。因为一天之内看得太多，需要记一下，组织得有些乱。">
+
+  <link rel="stylesheet" href="/css/main.css">
+  <link rel="canonical" href="http://blog.warp10.info/fs/storage/2013/05/17/filesystem.html">
+  <link rel="alternate" type="application/rss+xml" title="Warp 10" href="http://blog.warp10.info/feed.xml" />
+</head>
+
+
+  <body>
+
+    <header class="site-header">
+
+  <div class="wrapper">
+
+    <a class="site-title" href="/">Warp 10</a>
+
+    <nav class="site-nav">
+      <a href="#" class="menu-icon">
+        <svg viewBox="0 0 18 15">
+          <path fill="#424242" d="M18,1.484c0,0.82-0.665,1.484-1.484,1.484H1.484C0.665,2.969,0,2.304,0,1.484l0,0C0,0.665,0.665,0,1.484,0 h15.031C17.335,0,18,0.665,18,1.484L18,1.484z"/>
+          <path fill="#424242" d="M18,7.516C18,8.335,17.335,9,16.516,9H1.484C0.665,9,0,8.335,0,7.516l0,0c0-0.82,0.665-1.484,1.484-1.484 h15.031C17.335,6.031,18,6.696,18,7.516L18,7.516z"/>
+          <path fill="#424242" d="M18,13.516C18,14.335,17.335,15,16.516,15H1.484C0.665,15,0,14.335,0,13.516l0,0 c0-0.82,0.665-1.484,1.484-1.484h15.031C17.335,12.031,18,12.696,18,13.516L18,13.516z"/>
+        </svg>
+      </a>
+
+      <div class="trigger">
+        
+          
+          <a class="page-link" href="/about/">About</a>
+          
+        
+          
+        
+          
+        
+          
+        
+      </div>
+    </nav>
+
+  </div>
+
+</header>
+
+
+    <div class="page-content">
+      <div class="wrapper">
+        <div class="post">
+
+  <header class="post-header">
+    <h1 class="post-title">文件系统知识入门</h1>
+    <p class="post-meta">May 17, 2013</p>
+  </header>
+
+  <article class="post-content">
+    <p>不知道为什么会转头看文件系统，大概因为以前曾经试图看过reiserfs看不出个所以然来，完成一下心愿。因为一天之内看得太多，需要记一下，组织得有些乱。</p>
+
+<h2 id="directory-index">Directory Index</h2>
+<p><a href="http://ext2.sourceforge.net/2005-ols/paper-html/node3.html">link1</a>
+<a href="http://static.usenix.org/publications/library/proceedings/als01/full_papers/phillips/phillips_html/index.html">link2</a>
+早期的时候ext2为了实现简单，一个目录结构里面（文件/子目录）是挨个放在一起只能线性搜索的，当一个目录里面文件很多，缺点显而易见。所以开发者给打了一个patch，实现了一个类似B+树的Htree索引结构，
+一直被ext2/3/4沿用下来。
+key是文件名的hash，合并/分裂都和B+tree或者B*tree类似，叶子节点是正常的目录项，只不过存储的时候不排序，当分裂/合并的时候才需要重新排序。</p>
+
+<p>相比之下，Reiserfs是B*树，也是使用固定长度的hash做键值。而JFS，是使用变长健的prefix B-tree,叶子节点是full-length。定长的hash key的好处也很显然，一是内部节点可以放很多个key，可以做到高扇出（因此树的高度可以更小）;
+二是方便key对齐，键值拷贝的时候和查找都比较方便。</p>
+
+<p>觉得要支持变长健的b树实现起来其实挺麻烦，除了prefix B-tree之外，参考论文”Pagination of B*-trees with variable length records”, “efficient optimal pagination of scrolls”，还有<a href="http://people.apache.org/~shv/STrees.html">S(b)tree</a>，一种目的是提高满度(存储更紧凑)的generialized B-tree。</p>
+
+<h2 id="the-problem-of-inode-limit-on-ext234">The problem of inode limit on ext2/3/4</h2>
+<p>以前会遇到一个ext2文件系统inode用光了的情况，这是因为在mkfs的时候inode就预先分配了，可以看到<a href="https://ext4.wiki.kernel.org/index.php/Ext4_Disk_Layout#Layout">ext4 disk layout</a>里头，有专门的inode bitmap和inode table，superblock里头s_blocks_per_group, s_inodes_per_group都是静态的。不像reiserfs、btrfs是可以动态分配的。</p>
+
+<h2 id="file-block-mapping-direct-block-indirect-block">File-Block Mapping: Direct block, Indirect block</h2>
+<p>传统的单层/二层/三层块映射表，在教科书里已经说得很多了，每个表项只能映射一个block。缺点就是如果有很大的连续空间，在映射表里头还是要老老实实地添加每个映射项，个数多的时候读取起来也慢。
+所以为什么新的设计ext4、brtfs改成了extent tree的映射方式。</p>
+
+<h2 id="file-block-mapping-extent">File-Block Mapping: Extent</h2>
+<p>有一系列图文并茂的文章讲到ext4上面的extent。</p>
+
+<p><a href="http://computer-forensics.sans.org/blog/2010/12/20/digital-forensics-understanding-ext4-part-1-extents">digital forensics understanding ext4: part1</a></p>
+
+<p><a href="http://computer-forensics.sans.org/blog/2011/03/28/digital-forensics-understanding-ext4-part-3-extent-trees">digital forensics understanding ext4: part3</a></p>
+
+<p><a href="http://computer-forensics.sans.org/blog/2011/04/08/understanding-ext4-part-4-demolition-derby">digital forensics understanding ext4: part4</a></p>
+
+<p>也可以参考<a href="https://ext4.wiki.kernel.org/index.php/Ext4_Disk_Layout#The_Contents_of_inode.i_block">具体的数据结构</a></p>
+
+<p>struct ext4_inode.i_flags  如果有标志位EXT4_INODE_EXTENTS就表示用extent来映射，否则就是传统的direct/indirect mapping。</p>
+
+<p>ext4_inode.i_block(60字节)，由一个ext4_extent_header打头，根据其中的depth是否为0，决定后面的是最多四个的ext4_extent (extent树的叶子节点)，还是作为根的ext4_extent_idx(中间节点)。</p>
+
+<p>其中叶子节点的ee_block表示数据的逻辑块号，ee_start_hi&amp;lo表示映射的物理块号，由于ee_len是16位的，一个extent就可以映射2^16个块，比direct/Indirect mapping要节省很多用于元数据的空间。
+。而中间节点的ei_leaf_hi/lo表示下面子节点的物理块号。</p>
+
+<h2 id="ext4block-allocate-policy">ext4的block allocate policy</h2>
+<ol>
+  <li>
+    <p>allocate 8k to the file first,</p>
+  </li>
+  <li>
+    <p>if initial 8k used up,  delay commit until timeout/ sync() / kernel out of mem</p>
+  </li>
+  <li>
+    <p>try to keep a file in the same block group as the directory</p>
+  </li>
+  <li>
+    <p>optimise locality of directory near root</p>
+  </li>
+</ol>
+
+<p>可惜没有文章讲的更详细，ext4为了保持向前兼容性，还是被一些过时的设计所限制，回头还是应该去看看brtfs是怎么做的。</p>
+
+
+  </article>
+
+</div>
+
+      </div>
+    </div>
+
+    <footer class="site-footer">
+
+  <div class="wrapper">
+
+    <h2 class="footer-heading">Warp 10</h2>
+
+    <div class="footer-col-wrapper">
+      <div class="footer-col  footer-col-1">
+        <ul class="contact-list">
+          <li>Warp 10</li>
+          <li><a href="mailto:frostyplanet@localhost">frostyplanet@localhost</a></li>
+        </ul>
+      </div>
+
+      <div class="footer-col  footer-col-2">
+        <ul class="social-media-list">
+          
+          <li>
+            <a href="https://github.com/frostyplanet">
+              <span class="icon  icon--github">
+                <svg viewBox="0 0 16 16">
+                  <path fill="#828282" d="M7.999,0.431c-4.285,0-7.76,3.474-7.76,7.761 c0,3.428,2.223,6.337,5.307,7.363c0.388,0.071,0.53-0.168,0.53-0.374c0-0.184-0.007-0.672-0.01-1.32 c-2.159,0.469-2.614-1.04-2.614-1.04c-0.353-0.896-0.862-1.135-0.862-1.135c-0.705-0.481,0.053-0.472,0.053-0.472 c0.779,0.055,1.189,0.8,1.189,0.8c0.692,1.186,1.816,0.843,2.258,0.645c0.071-0.502,0.271-0.843,0.493-1.037 C4.86,11.425,3.049,10.76,3.049,7.786c0-0.847,0.302-1.54,0.799-2.082C3.768,5.507,3.501,4.718,3.924,3.65 c0,0,0.652-0.209,2.134,0.796C6.677,4.273,7.34,4.187,8,4.184c0.659,0.003,1.323,0.089,1.943,0.261 c1.482-1.004,2.132-0.796,2.132-0.796c0.423,1.068,0.157,1.857,0.077,2.054c0.497,0.542,0.798,1.235,0.798,2.082 c0,2.981-1.814,3.637-3.543,3.829c0.279,0.24,0.527,0.713,0.527,1.437c0,1.037-0.01,1.874-0.01,2.129 c0,0.208,0.14,0.449,0.534,0.373c3.081-1.028,5.302-3.935,5.302-7.362C15.76,3.906,12.285,0.431,7.999,0.431z"/>
+                </svg>
+              </span>
+
+              <span class="username">frostyplanet</span>
+            </a>
+          </li>
+          
+
+          
+        </ul>
+      </div>
+
+      <div class="footer-col  footer-col-3">
+        <p class="text">"Warp 10" is impossible speed in StarTrek universe
+</p>
+      </div>
+    </div>
+
+  </div>
+
+</footer>
+
+
+  </body>
+
+</html>

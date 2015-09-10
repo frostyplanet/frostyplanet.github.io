@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html>
+
+  <head>
+  <meta charset="utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+
+  <title>大集群配置管理系统开发(回忆)</title>
+  <meta name="description" content="先前在阿里的时候，做了一个配置管理项目，我独自负责两个部分的设计和开发：配置分发和执行(包括master和client)，还有版本管理仓库。在经历若干个月，迭代若干版本，子公司内部推广了若干集群(大约2至3千台机器)之后，由于公司被拆分和合并，所在团队解散，人员不足，还有我离开的原因，项目被荒废。现在回想起来，觉...">
+
+  <link rel="stylesheet" href="/css/main.css">
+  <link rel="canonical" href="http://blog.warp10.info/coding/2013/02/09/cm.html">
+  <link rel="alternate" type="application/rss+xml" title="Warp 10" href="http://blog.warp10.info/feed.xml" />
+</head>
+
+
+  <body>
+
+    <header class="site-header">
+
+  <div class="wrapper">
+
+    <a class="site-title" href="/">Warp 10</a>
+
+    <nav class="site-nav">
+      <a href="#" class="menu-icon">
+        <svg viewBox="0 0 18 15">
+          <path fill="#424242" d="M18,1.484c0,0.82-0.665,1.484-1.484,1.484H1.484C0.665,2.969,0,2.304,0,1.484l0,0C0,0.665,0.665,0,1.484,0 h15.031C17.335,0,18,0.665,18,1.484L18,1.484z"/>
+          <path fill="#424242" d="M18,7.516C18,8.335,17.335,9,16.516,9H1.484C0.665,9,0,8.335,0,7.516l0,0c0-0.82,0.665-1.484,1.484-1.484 h15.031C17.335,6.031,18,6.696,18,7.516L18,7.516z"/>
+          <path fill="#424242" d="M18,13.516C18,14.335,17.335,15,16.516,15H1.484C0.665,15,0,14.335,0,13.516l0,0 c0-0.82,0.665-1.484,1.484-1.484h15.031C17.335,12.031,18,12.696,18,13.516L18,13.516z"/>
+        </svg>
+      </a>
+
+      <div class="trigger">
+        
+          
+          <a class="page-link" href="/about/">About</a>
+          
+        
+          
+        
+          
+        
+          
+        
+      </div>
+    </nav>
+
+  </div>
+
+</header>
+
+
+    <div class="page-content">
+      <div class="wrapper">
+        <div class="post">
+
+  <header class="post-header">
+    <h1 class="post-title">大集群配置管理系统开发(回忆)</h1>
+    <p class="post-meta">Feb 9, 2013</p>
+  </header>
+
+  <article class="post-content">
+    <p>先前在阿里的时候，做了一个配置管理项目，我独自负责两个部分的设计和开发：配置分发和执行(包括master和client)，还有版本管理仓库。
+在经历若干个月，迭代若干版本，子公司内部推广了若干集群(大约2至3千台机器)之后，由于公司被拆分和合并，所在团队解散，
+人员不足，还有我离开的原因，项目被荒废。现在回想起来，觉得还是得趁没有完全遗忘之前，总结一下思想和经验，就当是给别人留一点东西吧。
+一来这并不算什么机密项目，二来只是总结一下设计而已，并不包括关键代码实现，应该没有什么不妥。时间有限，回忆不全，故不能写得太详细。</p>
+
+<p>在大公司里头，根据自身特殊需要做轮子是很常见的事情。
+这个项目按照ops团队提出的需求开展，光讨论和沟通在不同的team之间磨了不少时间。
+我们开始调研了一下很流行的puppet，基本上puppet提供的文件维护、包安装、维护系统服务、脚本执行等等，都是我们需要的，但是有几个问题：</p>
+
+<ol>
+  <li>
+    <p>Ops团队并不希望去使用命令行和掌握特殊的policy配置的语法；</p>
+  </li>
+  <li>
+    <p>puppet的服务端效率比较底下，在两三百台的时候还好，对于我司这样的集群规模就不能满足了。</p>
+  </li>
+  <li>
+    <p>就算是同样的服务配置文件，在不同的集群可能会有差异，需要在用户管理的时候有所体现。</p>
+  </li>
+  <li>
+    <p>执行结果需要用直观的方式体现，因为领导都喜欢看报表，所以需要分发执行模块和前端有接口。</p>
+  </li>
+  <li>
+    <p>puppet是ruby写的，team里面并没有写ruby的人，加之puppet使用了一种和ruby ast树结合的独门coding pattern，当时找不到相关的资料，因此在puppet基础上开发对我们来说并不现实。</p>
+  </li>
+  <li>
+    <p>能够批量回滚某个集群到某个版本的policy下发之前的状态。</p>
+  </li>
+</ol>
+
+<p>所以经过几天激烈的yy之后，把方案说服了所有团队成员和直接领导(虽然实际上后端只有我一个人来做，另一位同学帮忙做前端)，大体模块划分如下：</p>
+
+<pre><code>前端web &amp; 版本管理模块 (policy及其他要维护的文件)  --&gt; 生成模块（所分发的文件及其列表） --&gt; 分发master  &lt;--&gt; 执行client 
+	^																							|
+	+-------------------------------------------------------------------------------------------+
+</code></pre>
+
+<p>其中policy信息因为有一些字段故存在数据库，上传的配置存放在版本管理仓库里面。对于不同集群的配置文件差异则可以体现为版本管理里面的不同branch。版本管理模块是用python做了一个git的接口，每个配置项目就是一个git (bared)仓库，通过接口实现直读和直写，如果你觉得这个有用的话，可以看<a href="https://github.com/frostyplanet/git-store-python">git-store-python</a></p>
+
+<p>生成模块做的工作相对简单，为每台机器生成要下发的文件及其hash到一个这台机器的列表文件(Manifest), 为了靠谱(避免Manifest写了一半的时候被读取出错），另外生成一个相应的md5校验文件。</p>
+
+<p>分发和执行模块的设计其实是这里最有挑战的地方，一来要考虑通讯协议要把消息完整不遗漏地传递到准确地方， 二来要考虑master高并发效率还有规模可扩展，三要部署方便（client是纯python不依赖第三方库）。【时间已晚稍后待续】</p>
+
+
+  </article>
+
+</div>
+
+      </div>
+    </div>
+
+    <footer class="site-footer">
+
+  <div class="wrapper">
+
+    <h2 class="footer-heading">Warp 10</h2>
+
+    <div class="footer-col-wrapper">
+      <div class="footer-col  footer-col-1">
+        <ul class="contact-list">
+          <li>Warp 10</li>
+          <li><a href="mailto:frostyplanet@localhost">frostyplanet@localhost</a></li>
+        </ul>
+      </div>
+
+      <div class="footer-col  footer-col-2">
+        <ul class="social-media-list">
+          
+          <li>
+            <a href="https://github.com/frostyplanet">
+              <span class="icon  icon--github">
+                <svg viewBox="0 0 16 16">
+                  <path fill="#828282" d="M7.999,0.431c-4.285,0-7.76,3.474-7.76,7.761 c0,3.428,2.223,6.337,5.307,7.363c0.388,0.071,0.53-0.168,0.53-0.374c0-0.184-0.007-0.672-0.01-1.32 c-2.159,0.469-2.614-1.04-2.614-1.04c-0.353-0.896-0.862-1.135-0.862-1.135c-0.705-0.481,0.053-0.472,0.053-0.472 c0.779,0.055,1.189,0.8,1.189,0.8c0.692,1.186,1.816,0.843,2.258,0.645c0.071-0.502,0.271-0.843,0.493-1.037 C4.86,11.425,3.049,10.76,3.049,7.786c0-0.847,0.302-1.54,0.799-2.082C3.768,5.507,3.501,4.718,3.924,3.65 c0,0,0.652-0.209,2.134,0.796C6.677,4.273,7.34,4.187,8,4.184c0.659,0.003,1.323,0.089,1.943,0.261 c1.482-1.004,2.132-0.796,2.132-0.796c0.423,1.068,0.157,1.857,0.077,2.054c0.497,0.542,0.798,1.235,0.798,2.082 c0,2.981-1.814,3.637-3.543,3.829c0.279,0.24,0.527,0.713,0.527,1.437c0,1.037-0.01,1.874-0.01,2.129 c0,0.208,0.14,0.449,0.534,0.373c3.081-1.028,5.302-3.935,5.302-7.362C15.76,3.906,12.285,0.431,7.999,0.431z"/>
+                </svg>
+              </span>
+
+              <span class="username">frostyplanet</span>
+            </a>
+          </li>
+          
+
+          
+        </ul>
+      </div>
+
+      <div class="footer-col  footer-col-3">
+        <p class="text">"Warp 10" is impossible speed in StarTrek universe
+</p>
+      </div>
+    </div>
+
+  </div>
+
+</footer>
+
+
+  </body>
+
+</html>

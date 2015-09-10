@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html>
+
+  <head>
+  <meta charset="utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+
+  <title>OpenVSwitch</title>
+  <meta name="description" content="在生产环境用了OpenVSwitch（简称OVS）几个月，觉得应该总结一下。">
+
+  <link rel="stylesheet" href="/css/main.css">
+  <link rel="canonical" href="http://blog.warp10.info/linux/network/2013/01/27/openvswitch.html">
+  <link rel="alternate" type="application/rss+xml" title="Warp 10" href="http://blog.warp10.info/feed.xml" />
+</head>
+
+
+  <body>
+
+    <header class="site-header">
+
+  <div class="wrapper">
+
+    <a class="site-title" href="/">Warp 10</a>
+
+    <nav class="site-nav">
+      <a href="#" class="menu-icon">
+        <svg viewBox="0 0 18 15">
+          <path fill="#424242" d="M18,1.484c0,0.82-0.665,1.484-1.484,1.484H1.484C0.665,2.969,0,2.304,0,1.484l0,0C0,0.665,0.665,0,1.484,0 h15.031C17.335,0,18,0.665,18,1.484L18,1.484z"/>
+          <path fill="#424242" d="M18,7.516C18,8.335,17.335,9,16.516,9H1.484C0.665,9,0,8.335,0,7.516l0,0c0-0.82,0.665-1.484,1.484-1.484 h15.031C17.335,6.031,18,6.696,18,7.516L18,7.516z"/>
+          <path fill="#424242" d="M18,13.516C18,14.335,17.335,15,16.516,15H1.484C0.665,15,0,14.335,0,13.516l0,0 c0-0.82,0.665-1.484,1.484-1.484h15.031C17.335,12.031,18,12.696,18,13.516L18,13.516z"/>
+        </svg>
+      </a>
+
+      <div class="trigger">
+        
+          
+          <a class="page-link" href="/about/">About</a>
+          
+        
+          
+        
+          
+        
+          
+        
+      </div>
+    </nav>
+
+  </div>
+
+</header>
+
+
+    <div class="page-content">
+      <div class="wrapper">
+        <div class="post">
+
+  <header class="post-header">
+    <h1 class="post-title">OpenVSwitch</h1>
+    <p class="post-meta">Jan 27, 2013</p>
+  </header>
+
+  <article class="post-content">
+    <p>在生产环境用了OpenVSwitch（简称OVS）几个月，觉得应该总结一下。</p>
+
+<p>OpenVSwitch提供一个二层交换机所应该有的功能，替代了linux中的bridge模块，支持vlan,
+DSCP方式的QOS，流控，镜像，还支持openflow标准。
+在之前我们用bridge来做交换，做流控要研究十分难懂的tc，做bridge中的流量处理要用到ebtables，而QOS标志位的修改在ebtables的特性列表里面还是TODO状态，（不知道有了OVS之后还会不会有人做）。不过OVS还是比linux的native bridge复杂很多，如果你不需要做这么多事情，bridge足够你用了。</p>
+
+<p>至于OpenFlow，按照我的理解，只是一个标准，有别于传统二三层流量处理方式，你可以在一个openflow控制器的table中加入你定义的对特定特征的流量做特定的动作。
+如果有兴趣研究openflow的话可以去看他们的白皮书，<a href="www.openflow.org">openflow.org</a>上面还有一个可以运行在各种系统上的demo。目前已经有一些厂商生产支持openflow的硬件。</p>
+
+<p>说到OVS和OpenFlow的关系，OVS(native)本身是一个OpenFlow的软控制器，可以通过ovs-ofctl命令配置规则，比如匹配某特征的流量，可以是默认动作(normal), 广播(flood), 发到特定端口，对包的某部分做修改，丢弃，等等。你也可以配置OVS把流量发给一个非本地的OpenFlow控制器（如NOX）来处理，不过这超出我们的需求范围了，并没有研究过。</p>
+
+<p>性能据测试，如果不用bridge兼容模式的话，ovs的性能会比native bridge要好。</p>
+
+<p>管理方面，OVS本身有一个json文件做的db，只要这个db存在那么用ovs-vsctl做的操作都会一直有效。除此之外也可以用过python-openvswitch模块来做操作，不过话说这个模块还有点不完善，我觉得特别是在数据类型的转换有不恰当的地方。</p>
+
+<p>顺便吐曹几句，据我所知，目前linux厂商中只有Ubuntu正式维护了OpenVSwitch的包，RedHat作为老牌商业发行版已经落后了。ubuntu在云业务上面的努力值得称赞，除了OVS的支持之外还看到12.04正式支持XCP。而RedHat在6.x中却已经抛弃了Xen的支持，耐人寻味。Xen已经合并进3.0内核主干。保守的RedHat还在还在花很大力度维护自己的2.6.32分支。
+OVS在ubtuntu中安装还不算太复杂，但因为大家并没有把他看作linux标准部件，还是要改一些配置。</p>
+
+<h2 id="section">安装</h2>
+
+<pre><code>apt-get remove ebtables
+</code></pre>
+
+<p>我这里假定你不再需要传统的兼容bridge模块</p>
+
+<pre><code>apt-get remove bridge-utils
+
+apt-get install openvswitch-switch
+</code></pre>
+
+<p>假如你用ubuntu正式维护的内核，可以直接装他们编译好的内核模块</p>
+
+<pre><code>apt-get install openvswitch-datapath-dkms
+</code></pre>
+
+<p>否则你需要和你的内核源码一起编译</p>
+
+<pre><code>apt-get install openvswitch-datapath-source
+module-assistant auto-install openvswitch-datapath
+</code></pre>
+
+<p>修改网络接口配置 /etc/network/interfaces</p>
+
+<pre><code>auto eth0
+iface eth0 inet manual
+up ifconfig $IFACE up
+down ifconfig $IFACE down
+
+auto xenbr0
+iface xenbr0 inet manual
+up /sbin/ifconfig $IFACE IP地址 netmask 掩码
+post-up ip route add default via 网关
+down ifconfig $IFACE down
+</code></pre>
+
+<p>由于init脚本和OVS整合度不高，所以在启动的时候会等待网络接口而卡很久，所以要修改 /etc/init/failsafe.conf, 把下面sleep的很多秒的时间改成sleep 1</p>
+
+<pre><code>$PLYMOUTH message --text="Waiting for network configuration..." || :
+sleep 1
+
+$PLYMOUTH message --text="Waiting up to 60 more seconds for network configuration..." || :
+sleep 1
+</code></pre>
+
+<p>配置网桥</p>
+
+<pre><code>ovs-vsctl add-br xenbr0 &amp;&amp; ovs-vsctl add-port xenbr0 eth0 
+</code></pre>
+
+<p>然后重启就好了。</p>
+
+<h2 id="section-1">资料</h2>
+
+<p>关于OVS和OpenFlow的文章其实已经很多了，所以我就不花太多文字来说怎么用OVS。</p>
+
+<p>官方的Document已经十分详细，但是命令很多，csdn上有个人写了一些笔记。
+http://blog.csdn.net/yahohi/article/details/6631934</p>
+
+<p>这里有文章介绍怎么给kvm环境安装的
+http://networkstatic.net/tag/openvswitch</p>
+
+<p>其他的OpenFlow控制器
+<a href="http://www.noxrepo.org/">noxrepo.org</a></p>
+
+<p>关于OpenFlow的NORMAL和LOCAL两种动作的区别
+http://mailman.stanford.edu/pipermail/openflow-discuss/2011-October/002768.html</p>
+
+<h2 id="xen-hypervisor">Xen hypervisor的整合</h2>
+
+<p>如果你用XCP，XCP本身已经和OVS高度整合了，但是我们还在用Xen hypervisor，还是需要自己在/etc/xen/scripts中写一个给ovs专门的脚本。
+我放了一个基本功能的在github <a href="https://gist.github.com/4641579">GIST</a> ，如果你要实现mac过滤，防火墙，流控，vlan什么的，因为和特定管理机制、外部数据有关，你可以在其他地方实现再从vif脚本调用。</p>
+
+<h2 id="section-2">关于流量限速</h2>
+
+<p>在虚拟环境中，对vm的限速需求有两种，一种是从vm流向网桥，一种是网桥流向vm。</p>
+
+<p>Xen的netback驱动支持限速(通过vif的rate参数)，但是只能限vm流向网桥的，也就是往外发的流量，对于在vm里面从外面拖东西的流量并没有办法。他的实现很简单，只是在netback里面有一个周期性的计数器，要超过了就在这个周期不再发送，并不是队列方式的流量整形。</p>
+
+<p>而且netback的限速也有一个缺点，每次修改只能重启vm生效。我曾经实验过，修改xenstore中的参数并没有效果，除非你用xm命令把netback拆除再安上，但这会引起vm的不稳定而且可能需要尝试不确定的次数才会把网络重新连上。也曾经在csdn看过一篇文章，修改netback的代码让他去watch xenstore中的变化，但改内核是成本最大的方式。所以通过netback来限速并不是一个好的方式。</p>
+
+<p>用了OVS之后，上面的问题都可以解决。假如接口叫做vif1.0，限制1M bps。</p>
+
+<ul>
+  <li>
+    <p>限制vm外发的流量，这里单位是kbps</p>
+
+    <p>ovs-vsctl set Interface vif1.0 ingress_policing_rate=1000</p>
+
+    <p>ovs-vsctl set Interface vif1.0 ingress_policing_burst=100</p>
+  </li>
+</ul>
+
+<p>要删除限速，把上面的rate的参数改成0就行了。</p>
+
+<ul>
+  <li>
+    <p>限制vm接收的流量，这里单位是bps</p>
+
+    <p>ovs-vsctl – set port vif1.0 qos=@newqos – –id=@newqos create qos type=linux-htb other-config:max-rate=1000000 queues=0=@q0 \
+ – –id=@q0 create queue other-config:max-rate=1000000</p>
+  </li>
+</ul>
+
+<p>但是删除这个限速有一个比较麻烦的地方，就是他会在OVS的数据库中分别在Qos表和Queue表各有一条记录，
+Qos记录会引用Queue的id，所以你要先查到Queue和Qos的id，再删除，还没有一条简单的命令能完成这件事情。可以ovs-vsctl list和find命令来查询他的数据库，或者也可以用过pyhton-openvswitch模块来和他的数据库做交互。这里会有另外一个坑，但暂时没时间说了。</p>
+
+<p>所以总的来说OVS很先进，但是距离我们平常使用的交换机，易用性还有待提高。</p>
+
+
+  </article>
+
+</div>
+
+      </div>
+    </div>
+
+    <footer class="site-footer">
+
+  <div class="wrapper">
+
+    <h2 class="footer-heading">Warp 10</h2>
+
+    <div class="footer-col-wrapper">
+      <div class="footer-col  footer-col-1">
+        <ul class="contact-list">
+          <li>Warp 10</li>
+          <li><a href="mailto:frostyplanet@localhost">frostyplanet@localhost</a></li>
+        </ul>
+      </div>
+
+      <div class="footer-col  footer-col-2">
+        <ul class="social-media-list">
+          
+          <li>
+            <a href="https://github.com/frostyplanet">
+              <span class="icon  icon--github">
+                <svg viewBox="0 0 16 16">
+                  <path fill="#828282" d="M7.999,0.431c-4.285,0-7.76,3.474-7.76,7.761 c0,3.428,2.223,6.337,5.307,7.363c0.388,0.071,0.53-0.168,0.53-0.374c0-0.184-0.007-0.672-0.01-1.32 c-2.159,0.469-2.614-1.04-2.614-1.04c-0.353-0.896-0.862-1.135-0.862-1.135c-0.705-0.481,0.053-0.472,0.053-0.472 c0.779,0.055,1.189,0.8,1.189,0.8c0.692,1.186,1.816,0.843,2.258,0.645c0.071-0.502,0.271-0.843,0.493-1.037 C4.86,11.425,3.049,10.76,3.049,7.786c0-0.847,0.302-1.54,0.799-2.082C3.768,5.507,3.501,4.718,3.924,3.65 c0,0,0.652-0.209,2.134,0.796C6.677,4.273,7.34,4.187,8,4.184c0.659,0.003,1.323,0.089,1.943,0.261 c1.482-1.004,2.132-0.796,2.132-0.796c0.423,1.068,0.157,1.857,0.077,2.054c0.497,0.542,0.798,1.235,0.798,2.082 c0,2.981-1.814,3.637-3.543,3.829c0.279,0.24,0.527,0.713,0.527,1.437c0,1.037-0.01,1.874-0.01,2.129 c0,0.208,0.14,0.449,0.534,0.373c3.081-1.028,5.302-3.935,5.302-7.362C15.76,3.906,12.285,0.431,7.999,0.431z"/>
+                </svg>
+              </span>
+
+              <span class="username">frostyplanet</span>
+            </a>
+          </li>
+          
+
+          
+        </ul>
+      </div>
+
+      <div class="footer-col  footer-col-3">
+        <p class="text">"Warp 10" is impossible speed in StarTrek universe
+</p>
+      </div>
+    </div>
+
+  </div>
+
+</footer>
+
+
+  </body>
+
+</html>

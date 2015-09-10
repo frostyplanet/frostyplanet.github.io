@@ -1,0 +1,33 @@
+---
+layout: post
+categories: coding linux
+date: 2013-03-11 23:30:00
+title: evaluate overall cpu usage of a xen host
+---
+Lately I have been researching on monitoring xen cpu usage. 
+
+As I know there is no easy way for a python program to get performance metrics from Xen hypervisor,
+unless you want to mess up with low level library like libxc, or deploy the new XenAPI which came out in ubuntu 12.04.
+And I dug in the xentop / libxenstat source, only to know that libxenstat and its python binding are not shipped with ubuntu.
+But calculate cpu usage is a real simple job, the domain cpu_time used in "xentop" is in fact the same with the one in "xm list",
+so I imported the python code in "xm" and got the job done (to get the data from xend, and I've skipped the XenAPI part).  You can find xenstat.py in my [pyxen repo](https://github.com/frostyplanet/pyxen).
+
+Xen virtualize real cpus into multiple VCPUs. If a domU have 2 VCPUs, you may find its cpu usage in "xentop" between 0%-200%. 
+In my xenstat.py I have
+
+	total_cpu =  all_dom0_domU_cpu_time_elapse_sum  / time_elapse
+
+run the program and compare it with the number of your real cpu cores, you can determine the server load. 
+
+For example, on one of my physical machine (with 4 cores, 8 threads), I got these metrics:
+	
+	dom0_avg 0.497771679915
+	total 3.12977395954
+	dom0_avg 0.509708471051
+	total 3.1375385183
+	dom0_avg 0.506460638119
+	total 2.86128270259
+	dom0_avg 0.478186092127
+	total 2.89359146408
+
+

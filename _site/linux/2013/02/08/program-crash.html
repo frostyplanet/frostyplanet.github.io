@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html>
+
+  <head>
+  <meta charset="utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+
+  <title>进程无端挂掉了之后可以调查什么</title>
+  <meta name="description" content="近来redis偶尔会在某个时刻挂掉，找了一通。虽然说c程序突然挂掉，原因可能就两个：要么就是被OOM(out of memory kill)，要么就是代码有问题(segment fault之如此类的)。由于我以前并不是个正经的运维，所以调查起来还是花了一点时间。">
+
+  <link rel="stylesheet" href="/css/main.css">
+  <link rel="canonical" href="http://blog.warp10.info/linux/2013/02/08/program-crash.html">
+  <link rel="alternate" type="application/rss+xml" title="Warp 10" href="http://blog.warp10.info/feed.xml" />
+</head>
+
+
+  <body>
+
+    <header class="site-header">
+
+  <div class="wrapper">
+
+    <a class="site-title" href="/">Warp 10</a>
+
+    <nav class="site-nav">
+      <a href="#" class="menu-icon">
+        <svg viewBox="0 0 18 15">
+          <path fill="#424242" d="M18,1.484c0,0.82-0.665,1.484-1.484,1.484H1.484C0.665,2.969,0,2.304,0,1.484l0,0C0,0.665,0.665,0,1.484,0 h15.031C17.335,0,18,0.665,18,1.484L18,1.484z"/>
+          <path fill="#424242" d="M18,7.516C18,8.335,17.335,9,16.516,9H1.484C0.665,9,0,8.335,0,7.516l0,0c0-0.82,0.665-1.484,1.484-1.484 h15.031C17.335,6.031,18,6.696,18,7.516L18,7.516z"/>
+          <path fill="#424242" d="M18,13.516C18,14.335,17.335,15,16.516,15H1.484C0.665,15,0,14.335,0,13.516l0,0 c0-0.82,0.665-1.484,1.484-1.484h15.031C17.335,12.031,18,12.696,18,13.516L18,13.516z"/>
+        </svg>
+      </a>
+
+      <div class="trigger">
+        
+          
+          <a class="page-link" href="/about/">About</a>
+          
+        
+          
+        
+          
+        
+          
+        
+      </div>
+    </nav>
+
+  </div>
+
+</header>
+
+
+    <div class="page-content">
+      <div class="wrapper">
+        <div class="post">
+
+  <header class="post-header">
+    <h1 class="post-title">进程无端挂掉了之后可以调查什么</h1>
+    <p class="post-meta">Feb 8, 2013</p>
+  </header>
+
+  <article class="post-content">
+    <p>近来redis偶尔会在某个时刻挂掉，找了一通。虽然说c程序突然挂掉，原因可能就两个：要么就是被OOM(out of memory kill)，要么就是代码有问题(segment fault之如此类的)。由于我以前并不是个正经的运维，所以调查起来还是花了一点时间。</p>
+
+<ol>
+  <li>
+    <h2 id="syslog">syslog</h2>
+    <p>因为OOM的消息是由内核发出的，不同的系统的syslog/syslog-ng/rsyslog的配置不一样，有可能在/var/log/syslog，有可能在/var/log/message，
+也有可能在/var/log/kern.log，只需要跟据syslog的配置kenrel消息被定向到哪个文件，然后找”Out of memory”就行了。</p>
+  </li>
+  <li>
+    <h2 id="core-file-limit">core file limit</h2>
+    <p>如果真的是代码问题，因为core文件是默认不产生的，那么你需要在/etc/security/limits.conf解除大小限制 (详见manpage LIMITS.CONF(5))，然后重启服务</p>
+
+    <ul>
+      <li>soft    core            -1</li>
+      <li>hard    core            -1</li>
+    </ul>
+  </li>
+  <li>
+    <h2 id="core">core文件的位置</h2>
+    <p>core文件会产生在程序工作目录下面（如果程序代码中chdir或chroot过的话），或者是和启动服务的脚本有关，因为可能的位置实在太多了，所以也挺难找的。不同的系统有不同的bug report工具可以收集core的信息，redhat有abrt，ubuntu有apport。不过原理就是在/proc/sys/kernel/core_pattern，
+指定了core文件是直接产生(默认值是core)，还是调用某个程序把core的内容写到它的stdin中。</p>
+  </li>
+</ol>
+
+<p>server fault有一个帖子讨论到这个<a href="http://stackoverflow.com/questions/2065912/core-dumped-but-core-file-is-not-in-current-directory">问题</a>。</p>
+
+<ol>
+  <li>
+    <h2 id="debuging-symbol">debuging symbol的问题</h2>
+    <p>光有corefile，没有调试符号也没用。因为我们现在用gentoo，其他系统没有了解过。</p>
+  </li>
+</ol>
+
+<p>首先需要在CFLAGS中加上”-g”来产生调试符号，因为porage在编译完之后还会把符号strip掉，所以还需要给make.conf的FEATURES变量加上splitdebug 或者nostrip。详见<a href="http://www.gentoo.org/proj/en/qa/backtraces.xml">gentoo doc</a></p>
+
+<ol>
+  <li>
+    <h2 id="section">进程资源监控</h2>
+    <p>要持续监控一个进程的资源的话，serverfault有一个<a href="http://stackoverflow.com/questions/1663766/programmatic-resource-monitoring-per-process-in-linux">帖子</a> 讨论到这个问题。凡是ps能看的数据，在/proc/[pid]/stat都能获取到。</p>
+  </li>
+</ol>
+
+  </article>
+
+</div>
+
+      </div>
+    </div>
+
+    <footer class="site-footer">
+
+  <div class="wrapper">
+
+    <h2 class="footer-heading">Warp 10</h2>
+
+    <div class="footer-col-wrapper">
+      <div class="footer-col  footer-col-1">
+        <ul class="contact-list">
+          <li>Warp 10</li>
+          <li><a href="mailto:frostyplanet@localhost">frostyplanet@localhost</a></li>
+        </ul>
+      </div>
+
+      <div class="footer-col  footer-col-2">
+        <ul class="social-media-list">
+          
+          <li>
+            <a href="https://github.com/frostyplanet">
+              <span class="icon  icon--github">
+                <svg viewBox="0 0 16 16">
+                  <path fill="#828282" d="M7.999,0.431c-4.285,0-7.76,3.474-7.76,7.761 c0,3.428,2.223,6.337,5.307,7.363c0.388,0.071,0.53-0.168,0.53-0.374c0-0.184-0.007-0.672-0.01-1.32 c-2.159,0.469-2.614-1.04-2.614-1.04c-0.353-0.896-0.862-1.135-0.862-1.135c-0.705-0.481,0.053-0.472,0.053-0.472 c0.779,0.055,1.189,0.8,1.189,0.8c0.692,1.186,1.816,0.843,2.258,0.645c0.071-0.502,0.271-0.843,0.493-1.037 C4.86,11.425,3.049,10.76,3.049,7.786c0-0.847,0.302-1.54,0.799-2.082C3.768,5.507,3.501,4.718,3.924,3.65 c0,0,0.652-0.209,2.134,0.796C6.677,4.273,7.34,4.187,8,4.184c0.659,0.003,1.323,0.089,1.943,0.261 c1.482-1.004,2.132-0.796,2.132-0.796c0.423,1.068,0.157,1.857,0.077,2.054c0.497,0.542,0.798,1.235,0.798,2.082 c0,2.981-1.814,3.637-3.543,3.829c0.279,0.24,0.527,0.713,0.527,1.437c0,1.037-0.01,1.874-0.01,2.129 c0,0.208,0.14,0.449,0.534,0.373c3.081-1.028,5.302-3.935,5.302-7.362C15.76,3.906,12.285,0.431,7.999,0.431z"/>
+                </svg>
+              </span>
+
+              <span class="username">frostyplanet</span>
+            </a>
+          </li>
+          
+
+          
+        </ul>
+      </div>
+
+      <div class="footer-col  footer-col-3">
+        <p class="text">"Warp 10" is impossible speed in StarTrek universe
+</p>
+      </div>
+    </div>
+
+  </div>
+
+</footer>
+
+
+  </body>
+
+</html>

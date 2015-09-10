@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html>
+
+  <head>
+  <meta charset="utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+
+  <title>大集群配置管理系统开发(回忆) (2)</title>
+  <meta name="description" content="分发模块设计取舍">
+
+  <link rel="stylesheet" href="/css/main.css">
+  <link rel="canonical" href="http://blog.warp10.info/coding/2013/02/10/cm2.html">
+  <link rel="alternate" type="application/rss+xml" title="Warp 10" href="http://blog.warp10.info/feed.xml" />
+</head>
+
+
+  <body>
+
+    <header class="site-header">
+
+  <div class="wrapper">
+
+    <a class="site-title" href="/">Warp 10</a>
+
+    <nav class="site-nav">
+      <a href="#" class="menu-icon">
+        <svg viewBox="0 0 18 15">
+          <path fill="#424242" d="M18,1.484c0,0.82-0.665,1.484-1.484,1.484H1.484C0.665,2.969,0,2.304,0,1.484l0,0C0,0.665,0.665,0,1.484,0 h15.031C17.335,0,18,0.665,18,1.484L18,1.484z"/>
+          <path fill="#424242" d="M18,7.516C18,8.335,17.335,9,16.516,9H1.484C0.665,9,0,8.335,0,7.516l0,0c0-0.82,0.665-1.484,1.484-1.484 h15.031C17.335,6.031,18,6.696,18,7.516L18,7.516z"/>
+          <path fill="#424242" d="M18,13.516C18,14.335,17.335,15,16.516,15H1.484C0.665,15,0,14.335,0,13.516l0,0 c0-0.82,0.665-1.484,1.484-1.484h15.031C17.335,12.031,18,12.696,18,13.516L18,13.516z"/>
+        </svg>
+      </a>
+
+      <div class="trigger">
+        
+          
+          <a class="page-link" href="/about/">About</a>
+          
+        
+          
+        
+          
+        
+          
+        
+      </div>
+    </nav>
+
+  </div>
+
+</header>
+
+
+    <div class="page-content">
+      <div class="wrapper">
+        <div class="post">
+
+  <header class="post-header">
+    <h1 class="post-title">大集群配置管理系统开发(回忆) (2)</h1>
+    <p class="post-meta">Feb 10, 2013</p>
+  </header>
+
+  <article class="post-content">
+    <h2 id="section">分发模块设计取舍</h2>
+
+<p>从开始设计分发模块的通讯协议的时候，有几个考虑：</p>
+
+<ol>
+  <li>
+    <p>无状态，master和client都有若干自己的工作队列，但是不存在自身的状态转换。以便提高并发和扩展，也容易实现代理模式等。</p>
+  </li>
+  <li>
+    <p>交互的东西分为消息和文件传输。文件传输既可以在分发模块中实现，也可以单独拆出来用http之类的来下载。</p>
+  </li>
+  <li>
+    <p>client端要按照校验码cache住策略和相关的文件，自动清理过时的内容，不重复下载。</p>
+  </li>
+  <li>
+    <p>所以对于消息交互，设计成单向投递的方式，即请求和回复在不同的链接中传输，每个client按照自身所在的主机的dns解析为准。
+因为公司内部可能由于人员疏忽，难免有主机名不规范或者重复的错误情况。
+比如说有一个client声称自己是hostA向master获取配置策略，master不会从原有的链接直接返回消息，而是从dns查询hostA的ip来重新发起链接返回内容。
+这一方面避免了client端冒充成另一个client，另一方面我觉得也应该加强了master同时处理请求的能力。</p>
+  </li>
+  <li>
+    <p>对于要发给client的配置策略，支持client端定时轮询和master端主动push。</p>
+  </li>
+  <li>
+    <p>对于一个master如何证明自身，可以考虑在生成模块产生下发文件列表的时候用自身私钥来签名，然后client根据预先分发的公钥来做验证，不过这个优先级并不高。</p>
+  </li>
+  <li>
+    <p>client知道了要下发的文件列表之后，下载文件不光要知道文件名，还要提供文件的哈希码才能下载。</p>
+  </li>
+  <li>
+    <p>由于我司不同的机房之间网络延时不同，因此client和master之间可能需要一个proxy。(不过事后我有点怀疑这个是否必要，加大了实现复杂度)</p>
+  </li>
+  <li>
+    <p>根据交互方式，分成uplink(client-&gt;master)、down-stream(master-&gt;client)、
+direct(任何两方的直接交互)。direct类型的包括文件下载，和对每个daemon的控制/监控信息。对于uplink类型的，消息分成不可靠的和可靠两类，即一次投递不成功，是丢弃还是保存至投递成功为止；对于down-stream类型的, 某些类型的消息(如Manifest)一次投递不成功需要触发一个DeliveryFail的反馈，好让前端统计。</p>
+  </li>
+</ol>
+
+<h2 id="section-1">实现方面的考虑</h2>
+
+<p>可靠性方面，master和client都需要考虑graceful stop/restart，即没有完成投递的要求可靠的消息都要保存，没有完成的工作都要等待完成再退出。</p>
+
+<p>我们目标是一个master要handle尽可能多的链接，而不关注反应速度。由于python的线程并发效率不高，而像greenlet之类的也要编译，多进程实现太麻烦，所以硬着头皮写异步方式的交互，主线程来poll的方式，并没有用线程池或worker的方式。</p>
+
+<p>由于感觉client和master有十分多的共通的部分，只是接到消息的时候具体行为不一样，所以抽象了一些模块。</p>
+
+<ul>
+  <li>
+    <p>消息报文封装，用python自带的pickle来序列和反序列化。由于报文多种多样，为了考虑python2.3的兼容，没有用metaclass之类的高级特性。
+基类实现序列和反序列化函数，在序列化的时候保存派生类的名称，在解报文的时候根据消息类型检查必要的字段是否具备，再还原具体的消息对象。
+所有消息传输之前都必须发一个定长的消息头，后面是序列化过的变长内容。</p>
+  </li>
+  <li>
+    <p>为socket通信实现了一个<a href="https://github.com/frostyplanet/python-socket-engine">python-socket-engine模块</a>，支持同步/异步方式的通讯，支持以异步方式connect。后端支持select和epoll边缘触发(如果有的话)。
+为了异步方式还实现了定时检查以处理超时读写的机制。
+后来因为异步的callback调试麻烦，加上了一些callback堆栈跟踪的特性。
+本来计划有时间再加一个libev或libevent的事件后端，后来因为没时间而作罢。</p>
+  </li>
+  <li>
+    <p>client为了支持批量回滚的policy动作的需要，做了本地备份模块，和用gdbm做的一个支持按照特定规则查找文件变更记录的DB。</p>
+  </li>
+  <li>
+    <p>为了支持proxy，master实现了一个用于down-stream消息寻路的路由表。某个client可以根据路由表制定而成为一批机器的proxy。client端因此实现了一个cache模块来代理文件下载。
+而client端寻找proxy是根据预先配置的一个master的域名来解除ip列表，在这个列表中随机找一个发出一个BindReq消息，master收到之后发出一个down-stream类型的BindResp消息，
+通过路由规则在经过的proxy上留下其ip地址，那么目标的client就会绑定最后转发的proxy，直至这个proxy连不上，才会从新发起一次BindReq的过程。</p>
+  </li>
+  <li>
+    <p>为uplink消息实现了若干队列，包括一个优先投递队列(专门用来发BindReq)，一个内存队列(不可靠消息)，一个持久化队列(可靠消息)。
+因为我不想master保留十分多长链接，所以这些消息队列都是在一个链接中投递完消息直至队列空再关闭链接。
+其中持久化队列是用gdbm来做的，理由是每一台机器的python一般都编译了gdbm支持。</p>
+  </li>
+  <li>
+    <p>工作队列，master上用来执行一些批量链接client端的操作；而client则用来进行文件下载，或执行策略。</p>
+  </li>
+  <li>
+    <p>client实现原本用puppet来执行策略，后来因为发觉从puppet输出日志中并不能获得我们需要的所有执行结果信息。于是
+换成自己写的纯python实现的模块，也是分成类似policy、resource、provider的结构。</p>
+  </li>
+</ul>
+
+<h2 id="section-2">项目得失</h2>
+
+<p>由于上面说的设计考虑，包含多种交互方式，在上线之前对master可以handle的client数量一直是未能评估的。到最后 的版本，分发模块总共写了2w多行python代码（连同单测和模拟）。因为一人做多个项目，也未没有空写一个压力测试来评估处理特定消息类型的性能。不光是我,开发前端的同学一样感到独立难支。</p>
+
+<p>master和前端、前端数据库都运行在一台机器上，观察cpu使用情况，因为master使用单线程异步的方式，cpu占用并不高(20%的样子)；而因为policy执行结果通过前端api写到mysql，会观察到mysqld占用50%-60%的cpu。</p>
+
+<p>master压力最高的时候，是发布新版本客户端，这时每个client都在连接master，可以观察到master的链接数有1.5k-2k，用监控接口统计会知道一部分client端连接master超时，
+直到两三个client运行周期(每次重连都会加入一定的随机延迟)之后才达到没超时现象。
+因为在为了可靠性加入gdbm实现的消息队列之前，并没有观察到超时现象。可见gdbm写操作是master的一个瓶颈。当时并没有时间去比较其他实现方式。</p>
+
+<p>proxy模式从前到后都没机会使用。现在想来，如果使用proxy，只能减少master的处理的链接数，可能某些超时情况会改善，但是并不能减少单master处理的消息数。</p>
+
+<p>离职的时候，收到的反馈是master的队列中的待处理消息变得很长，我估计是由于前端数据库压力太大所带来的恶性循环。</p>
+
+<p>因为项目被管理层废弃还有离职的原因，当时并没有想什么改进的办法。现在看来，
+如果分发模块的分布式扩展的角度考虑改进(因为从提升单机性能上成本会比较大)，或许将proxy收到的执行结果改成直接发送给前端处理，并且把发布目录(包含policy/manifest)从master机器镜像到proxy机器上。但是前端数据库仍旧是没办法的单点瓶颈，可以考虑迁移到专用机器，或者数据库改成用redis之类的nosql实现。</p>
+
+<p>虽说这个项目在不涉足运维圈的人看来并没有什么吸引力，而且我个人能力和精力有限，还是积累了一些设计经验，引发了一些思考，希望能对未来的项目有用，所以在一年后的今天有了这篇笔记。</p>
+
+
+  </article>
+
+</div>
+
+      </div>
+    </div>
+
+    <footer class="site-footer">
+
+  <div class="wrapper">
+
+    <h2 class="footer-heading">Warp 10</h2>
+
+    <div class="footer-col-wrapper">
+      <div class="footer-col  footer-col-1">
+        <ul class="contact-list">
+          <li>Warp 10</li>
+          <li><a href="mailto:frostyplanet@localhost">frostyplanet@localhost</a></li>
+        </ul>
+      </div>
+
+      <div class="footer-col  footer-col-2">
+        <ul class="social-media-list">
+          
+          <li>
+            <a href="https://github.com/frostyplanet">
+              <span class="icon  icon--github">
+                <svg viewBox="0 0 16 16">
+                  <path fill="#828282" d="M7.999,0.431c-4.285,0-7.76,3.474-7.76,7.761 c0,3.428,2.223,6.337,5.307,7.363c0.388,0.071,0.53-0.168,0.53-0.374c0-0.184-0.007-0.672-0.01-1.32 c-2.159,0.469-2.614-1.04-2.614-1.04c-0.353-0.896-0.862-1.135-0.862-1.135c-0.705-0.481,0.053-0.472,0.053-0.472 c0.779,0.055,1.189,0.8,1.189,0.8c0.692,1.186,1.816,0.843,2.258,0.645c0.071-0.502,0.271-0.843,0.493-1.037 C4.86,11.425,3.049,10.76,3.049,7.786c0-0.847,0.302-1.54,0.799-2.082C3.768,5.507,3.501,4.718,3.924,3.65 c0,0,0.652-0.209,2.134,0.796C6.677,4.273,7.34,4.187,8,4.184c0.659,0.003,1.323,0.089,1.943,0.261 c1.482-1.004,2.132-0.796,2.132-0.796c0.423,1.068,0.157,1.857,0.077,2.054c0.497,0.542,0.798,1.235,0.798,2.082 c0,2.981-1.814,3.637-3.543,3.829c0.279,0.24,0.527,0.713,0.527,1.437c0,1.037-0.01,1.874-0.01,2.129 c0,0.208,0.14,0.449,0.534,0.373c3.081-1.028,5.302-3.935,5.302-7.362C15.76,3.906,12.285,0.431,7.999,0.431z"/>
+                </svg>
+              </span>
+
+              <span class="username">frostyplanet</span>
+            </a>
+          </li>
+          
+
+          
+        </ul>
+      </div>
+
+      <div class="footer-col  footer-col-3">
+        <p class="text">"Warp 10" is impossible speed in StarTrek universe
+</p>
+      </div>
+    </div>
+
+  </div>
+
+</footer>
+
+
+  </body>
+
+</html>

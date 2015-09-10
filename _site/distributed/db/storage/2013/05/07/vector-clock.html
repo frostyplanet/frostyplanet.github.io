@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html>
+
+  <head>
+  <meta charset="utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+
+  <title>vector clock and eventual consistency</title>
+  <meta name="description" content="学习了一下Amazon Dynamo的文章。因为分布式系统CAP原理的限制，他们选择了损失一致性的前提来把可用性做到最大，强调的是always writable，还有根据业务动态调整Quorum NRW参数，可以想象为什么当时会引起很大的轰动。">
+
+  <link rel="stylesheet" href="/css/main.css">
+  <link rel="canonical" href="http://blog.warp10.info/distributed/db/storage/2013/05/07/vector-clock.html">
+  <link rel="alternate" type="application/rss+xml" title="Warp 10" href="http://blog.warp10.info/feed.xml" />
+</head>
+
+
+  <body>
+
+    <header class="site-header">
+
+  <div class="wrapper">
+
+    <a class="site-title" href="/">Warp 10</a>
+
+    <nav class="site-nav">
+      <a href="#" class="menu-icon">
+        <svg viewBox="0 0 18 15">
+          <path fill="#424242" d="M18,1.484c0,0.82-0.665,1.484-1.484,1.484H1.484C0.665,2.969,0,2.304,0,1.484l0,0C0,0.665,0.665,0,1.484,0 h15.031C17.335,0,18,0.665,18,1.484L18,1.484z"/>
+          <path fill="#424242" d="M18,7.516C18,8.335,17.335,9,16.516,9H1.484C0.665,9,0,8.335,0,7.516l0,0c0-0.82,0.665-1.484,1.484-1.484 h15.031C17.335,6.031,18,6.696,18,7.516L18,7.516z"/>
+          <path fill="#424242" d="M18,13.516C18,14.335,17.335,15,16.516,15H1.484C0.665,15,0,14.335,0,13.516l0,0 c0-0.82,0.665-1.484,1.484-1.484h15.031C17.335,12.031,18,12.696,18,13.516L18,13.516z"/>
+        </svg>
+      </a>
+
+      <div class="trigger">
+        
+          
+          <a class="page-link" href="/about/">About</a>
+          
+        
+          
+        
+          
+        
+          
+        
+      </div>
+    </nav>
+
+  </div>
+
+</header>
+
+
+    <div class="page-content">
+      <div class="wrapper">
+        <div class="post">
+
+  <header class="post-header">
+    <h1 class="post-title">vector clock and eventual consistency</h1>
+    <p class="post-meta">May 7, 2013</p>
+  </header>
+
+  <article class="post-content">
+    <p>学习了一下Amazon Dynamo的文章。因为分布式系统CAP原理的限制，他们选择了损失一致性的前提来把可用性做到最大，强调的是always writable，还有根据业务动态调整Quorum NRW参数，可以想象为什么当时会引起很大的轰动。</p>
+
+<p>既然是最终一致性，也就只要并发存在，数据肯定存在不一致的时候。出现多个版本的数据的情况至少有两种：
+1. 不同的客户端并发读写, 2. 在最新的数据还没有传递到相应副本节点的时候，这个节点被选择成为协调写操作的节点。</p>
+
+<p>跟踪多个版本，用到了vector clock。(Vector Clock的研究有很多，可以看<a href="http://net.pku.edu.cn/~course/cs501/2008/reading/a_tour_vc.html">A Practical Tour of Vector Clock Systems</a>这篇survey)。不过需要注意的是和<a href="http://en.wikipedia.org/wiki/Vector_clock">wikipedia</a>上面说的并不太一样。数据库只在写入的时候增加vector clock, 一个value的数据副本发送到其他节点的时候，附带的vector clock是不会增加的。一个节点上收到多个版本的数据的时候，如果任意两个版本中存在偏序，小的那个可以被丢弃；如果判断不了，就交给客户端在读取的时候去由业务逻辑做合并。</p>
+
+<p>比如说，下面的偏序关系是成立的：</p>
+
+<pre><code>A1 &lt; A1B1,  B1 &lt; A1B1,  A1B1 &lt; A1B2
+</code></pre>
+
+<p>但是当有A1B1和A1C1的时候，就意味着存在冲突了，由客户端逻辑合并之后的版本就是A1B1C1，覆盖掉之前的A1B1和A1C1。</p>
+
+<p>如果把vector clock中的版本方式换成一定精度的时间戳，也是可以的，而且让解决冲突的时候比较方便一些，当vector clock变得过长需要截断的时候也方便一些。</p>
+
+<p>另一个基于dynamo思想的k-v存储Riak，他们有两篇vector clock的文章也说的比较显浅<a href="http://basho.com/why-vector-clocks-are-easy/">why-vector-clocks-are-easy</a>，<a href="http://basho.com/why-vector-clocks-are-hard/">why-vector-clocks-are-hard</a>。只不过他们的不同之处是将vector clock暴露给客户端，用client-id去作向量的维度，区别于dynamo论文说的用coordinator的node-id作维度。不过我觉得这种方法在把复杂性暴露给客户端，还有在client很多的情况下让vector clock变得很大这些缺点，优点其实可以忽略掉。
+我觉得既然放弃了事务特性而选择了最终一致，那就意味着业务逻辑必须要接受一致性损失。如果非要纠结的话，那还不如读写串行化或者改用其他支持事务的实现来得更实际。</p>
+
+
+  </article>
+
+</div>
+
+      </div>
+    </div>
+
+    <footer class="site-footer">
+
+  <div class="wrapper">
+
+    <h2 class="footer-heading">Warp 10</h2>
+
+    <div class="footer-col-wrapper">
+      <div class="footer-col  footer-col-1">
+        <ul class="contact-list">
+          <li>Warp 10</li>
+          <li><a href="mailto:frostyplanet@localhost">frostyplanet@localhost</a></li>
+        </ul>
+      </div>
+
+      <div class="footer-col  footer-col-2">
+        <ul class="social-media-list">
+          
+          <li>
+            <a href="https://github.com/frostyplanet">
+              <span class="icon  icon--github">
+                <svg viewBox="0 0 16 16">
+                  <path fill="#828282" d="M7.999,0.431c-4.285,0-7.76,3.474-7.76,7.761 c0,3.428,2.223,6.337,5.307,7.363c0.388,0.071,0.53-0.168,0.53-0.374c0-0.184-0.007-0.672-0.01-1.32 c-2.159,0.469-2.614-1.04-2.614-1.04c-0.353-0.896-0.862-1.135-0.862-1.135c-0.705-0.481,0.053-0.472,0.053-0.472 c0.779,0.055,1.189,0.8,1.189,0.8c0.692,1.186,1.816,0.843,2.258,0.645c0.071-0.502,0.271-0.843,0.493-1.037 C4.86,11.425,3.049,10.76,3.049,7.786c0-0.847,0.302-1.54,0.799-2.082C3.768,5.507,3.501,4.718,3.924,3.65 c0,0,0.652-0.209,2.134,0.796C6.677,4.273,7.34,4.187,8,4.184c0.659,0.003,1.323,0.089,1.943,0.261 c1.482-1.004,2.132-0.796,2.132-0.796c0.423,1.068,0.157,1.857,0.077,2.054c0.497,0.542,0.798,1.235,0.798,2.082 c0,2.981-1.814,3.637-3.543,3.829c0.279,0.24,0.527,0.713,0.527,1.437c0,1.037-0.01,1.874-0.01,2.129 c0,0.208,0.14,0.449,0.534,0.373c3.081-1.028,5.302-3.935,5.302-7.362C15.76,3.906,12.285,0.431,7.999,0.431z"/>
+                </svg>
+              </span>
+
+              <span class="username">frostyplanet</span>
+            </a>
+          </li>
+          
+
+          
+        </ul>
+      </div>
+
+      <div class="footer-col  footer-col-3">
+        <p class="text">"Warp 10" is impossible speed in StarTrek universe
+</p>
+      </div>
+    </div>
+
+  </div>
+
+</footer>
+
+
+  </body>
+
+</html>

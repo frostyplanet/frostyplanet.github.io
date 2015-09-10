@@ -1,0 +1,27 @@
+---
+layout: post
+categories: coding distributed
+date: 2013/05/1 23:00:00
+title: Paxos实践
+---
+
+有一句话叫做，”世上只有一种分布式一致性协议，那就是Paxos“，之前所有协议（如2步提交等）的思想都可以被paxos所包含了。
+于是这两天在看了几篇paper，先是Lamport的"Paxos Made Simple"，但是没有去看"the Part-time Parliament"，Lamport自己也说了，先前那篇论文对很多人来说像希腊文一样难以理解-_-，大家都不懂欣赏他的幽默...
+"Paxos Made Simple"这篇中已经描述了基本的Paxos协议，和探讨把多个事务(paxos实例)串联起来，不过最后关于银行系统实现的章节举例的比较简略。
+后来又去看出自google chubby分布式锁项目的那篇"Paxos Made Live"，说到MultiPaxos这种演化出来的协议怎么从工程角度提高paxos的性能和避免一系列的复杂容错问题。另外英文维基上也讲了各种像Fast Paxos, 
+Cheap Paxos，Generalized Paxos等演化版本。
+
+关于paxos的几个前提限定的文字在维基上都说的很简单，然而光看了还是对具体的算法步骤不太清楚，过的时间越久好像变得越糊涂，所以开始写一个python的演示代码来看看具体怎么运行。repo在[这里](https://github.com/frostyplanet/paxos)。写的过程中不得不又仔细推敲了paxos那几个限定条件，实际上BasicPaxos的实现也不需要很多代码，然后很多疑惑都烟消云散了。
+
+目前暂时只完成了多个实例在多线程下的模拟（包括proposer互相竞争的过程），后面todo的还有节点失效的模拟，网络协议的整合，有时间的话还打算做一下multipaxos和关于动态成员管理的功能。
+
+另外还有关于实现的两篇论文可以参考，"Paxos Made Practice"和"Paxos Made Code"。
+
+ps，记录一下我自己理解到的要点：
+
+* 同一个paxos实例可以被多次运行，要决定的value可以是任何东西。如果单纯用paxos来选举leader的话，随机给一个值就行了。当然也可以把一些像事务日志当成value分发给众replica
+
+* 保证promise的和accepted的proposer的序号的全局有序性。acceptor角色，prepare阶段，已经promise过的序号只能被更大的来覆盖。
+如果一旦到了accept(决定)阶段，已经决定的值就达成一致不能再变更了，可以把这个看成是用paxos来进行的对众replica的写操作。
+至于读操作，也可以通过发起一次完整paxos的，收到promise/accepted/nack会得知已经决定过的值。
+
